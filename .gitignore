@@ -1,0 +1,12 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+node_modules/
+.env
+dist/
+build/
+.DS_Store
+*.docx
+*.pdf
+data/

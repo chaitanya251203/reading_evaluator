@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+SQLAlchemy
+python-multipart
+faster-whisper
+PyMuPDF
+jiwer
+rapidfuzz
+openai
+python-dotenv
+groq
