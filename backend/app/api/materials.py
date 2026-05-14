@@ -11,6 +11,8 @@ from app.db.database import get_db
 from app.models.material import Material
 from app.schemas.material import MaterialOut, MaterialTextOut
 from app.services.pdf_service import extract_pdf_text
+from app.core.security import get_current_user
+from app.models.teacher import Teacher
 
 router = APIRouter()
 logger = logging.getLogger("reading_assessment")
@@ -26,6 +28,7 @@ def upload_material(
     class_level: str = Form(...),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    current_user: Teacher = Depends(get_current_user),
 ):
     logger.info("materials.upload start title=%s", title)
     MATERIALS_DIR.mkdir(parents=True, exist_ok=True)
@@ -63,6 +66,7 @@ def upload_material(
         sha256=sha256,
         language=language,
         class_level=class_level,
+        teacher_id=current_user.id if not current_user.is_admin else None,
     )
     db.add(material)
     db.commit()
@@ -72,25 +76,36 @@ def upload_material(
 
 
 @router.get("", response_model=List[MaterialOut])
-def list_materials(db: Session = Depends(get_db)):
+def list_materials(db: Session = Depends(get_db), current_user: Teacher = Depends(get_current_user)):
     logger.info("materials.list")
-    return db.query(Material).order_by(Material.uploaded_at.desc()).all()
+    query = db.query(Material)
+    if not current_user.is_admin:
+        query = query.filter((Material.teacher_id == current_user.id) | (Material.teacher_id.is_(None)))
+    return query.order_by(Material.uploaded_at.desc()).all()
 
 
 @router.get("/{material_id}/text", response_model=MaterialTextOut)
-def get_material_text(material_id: int, db: Session = Depends(get_db)):
-    material = db.query(Material).filter(Material.id == material_id).first()
+def get_material_text(material_id: int, db: Session = Depends(get_db), current_user: Teacher = Depends(get_current_user)):
+    query = db.query(Material).filter(Material.id == material_id)
+    if not current_user.is_admin:
+        query = query.filter((Material.teacher_id == current_user.id) | (Material.teacher_id.is_(None)))
+        
+    material = query.first()
     if not material:
-        raise HTTPException(status_code=404, detail="Material not found")
+        raise HTTPException(status_code=404, detail="Material not found or not authorized")
     return material
 
 
 @router.delete("/{material_id}")
-def delete_material(material_id: int, db: Session = Depends(get_db)):
+def delete_material(material_id: int, db: Session = Depends(get_db), current_user: Teacher = Depends(get_current_user)):
     logger.info("materials.delete start id=%s", material_id)
-    material = db.query(Material).filter(Material.id == material_id).first()
+    query = db.query(Material).filter(Material.id == material_id)
+    if not current_user.is_admin:
+        query = query.filter(Material.teacher_id == current_user.id)
+        
+    material = query.first()
     if not material:
-        raise HTTPException(status_code=404, detail="Material not found")
+        raise HTTPException(status_code=404, detail="Material not found or not authorized to delete")
     
     # Optionally delete the associated PDF file
     if material.filepath:

@@ -25,6 +25,7 @@ class ReadingSessionOut(BaseModel):
     session_type: Optional[str] = "normal"
     ai_overview: Optional[str] = ""
     created_at: datetime
+    statuses: Optional[List[str]] = None
 
 
 class ReadingSessionEvaluate(BaseModel):

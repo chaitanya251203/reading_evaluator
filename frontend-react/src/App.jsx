@@ -1,8 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
 import ReactMarkdown from 'react-markdown';
+import { BookOpen, Activity, FileText, Settings, UserPlus, Users, MessageSquare, Play, Square, RotateCcw, TrendingUp, Mic, Edit3, Trash2, BookText, GraduationCap, PlusCircle, Bot, Headphones, FilePlus, ChevronDown, ChevronUp, Save, BarChart3, AlertCircle, LogOut } from 'lucide-react';
+import Login from './Login';
 
 const API = import.meta.env.VITE_API_BASE || (window.location.hostname === "localhost" && window.location.port === "5173" ? "http://localhost:8000" : window.location.origin);
+const authFetch = (url, options = {}) => {
+  const token = localStorage.getItem("vachanam_token");
+  const headers = { ...options.headers };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  return fetch(url, { ...options, headers });
+};
 const WS_URL = import.meta.env.VITE_WS_BASE || (window.location.hostname === "localhost" && window.location.port === "5173" ? "ws://localhost:8000/reading/ws/transcribe" : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/reading/ws/transcribe`);
 
 const fmt = (s) => { const m = String(Math.floor(s/60)).padStart(2,"0"); const r = String(s%60).padStart(2,"0"); return `${m}:${r}`; };
@@ -27,6 +35,11 @@ const alignW = (exp,spk) => { const st=new Array(exp.length).fill("unread"); let
 const langCode = (l) => { const s=(l||"").toLowerCase(); if(s.includes("hindi")||s==="hi") return "hi-IN"; if(s.includes("english")||s==="en") return "en-IN"; return "en-US"; };
 
 export default function App() {
+  const [token, setToken] = useState(localStorage.getItem("vachanam_token") || null);
+  const [user, setUser] = useState(JSON.parse(localStorage.getItem("vachanam_user")) || null);
+  const [profileName, setProfileName] = useState("");
+  const [profileSubject, setProfileSubject] = useState("");
+  const [profileLoading, setProfileLoading] = useState(false);
   const [students,setStudents]=useState([]); const [materials,setMaterials]=useState([]); const [teachers,setTeachers]=useState([]);
   const [selStudent,setSelStudent]=useState(""); const [selMaterial,setSelMaterial]=useState(""); const [selTeacher,setSelTeacher]=useState("");
   const [metrics,setMetrics]=useState(null); const [active,setActive]=useState(false);
@@ -53,7 +66,7 @@ export default function App() {
   const [impError,setImpError]=useState("");
 
   // Sidebar form state
-  const [fTeacher,setFTeacher]=useState({name:"",subject:""});
+  const [fTeacher,setFTeacher]=useState({name:"",email:"",password:"",subject:""});
   const [fStudent,setFStudent]=useState({name:"",class_name:"",roll_no:"",teacher_id:""});
   const [fMaterial,setFMaterial]=useState({title:"",language:"english",class_level:"",file:null});
 
@@ -77,15 +90,16 @@ export default function App() {
   useEffect(()=>{activeRef.current=active;},[active]);
 
   const reload = useCallback(()=>{
-    fetch(`${API}/students`).then(r=>r.json()).then(setStudents).catch(()=>{});
-    fetch(`${API}/materials`).then(r=>r.json()).then(setMaterials).catch(()=>{});
-    fetch(`${API}/teachers`).then(r=>r.json()).then(setTeachers).catch(()=>{});
-  },[]);
+    if (!token) return;
+    authFetch(`${API}/students`).then(r=>r.json()).then(setStudents).catch(()=>{});
+    authFetch(`${API}/materials`).then(r=>r.json()).then(setMaterials).catch(()=>{});
+    authFetch(`${API}/teachers`).then(r=>r.json()).then(setTeachers).catch(()=>{});
+  },[token]);
   useEffect(()=>{reload();},[reload]);
 
   useEffect(()=>{
     if(!selMaterial){setExpWords([]);setWStatus([]);setCurIdx(0);return;}
-    fetch(`${API}/materials/${selMaterial}/text`).then(r=>r.json()).then(p=>{
+    authFetch(`${API}/materials/${selMaterial}/text`).then(r=>r.json()).then(p=>{
       const t=(p.text_content||"").replace(/\n/g," ").replace(/\s+/g," ").trim().split(" ").filter(Boolean);
       expRef.current=t; setExpWords(t); setWStatus(new Array(t.length).fill("unread"));
       lockRef.current=new Array(t.length).fill("unread"); setCurIdx(0); hwRef.current=0; prevWordsRef.current=[];
@@ -165,7 +179,7 @@ export default function App() {
     srWatchRef.current=setInterval(()=>{
       if(!activeRef.current||!recRef.current) return;
       try{recRef.current.stop();}catch{}
-    },2500);
+    },3500);
   },[]);
   const stopSR=useCallback(()=>{
     if(srWatchRef.current){clearInterval(srWatchRef.current);srWatchRef.current=null;}
@@ -234,11 +248,14 @@ export default function App() {
     if(!sessionId) return; setEvaluating(true); setError("");
     try{
       const ctrl=new AbortController(); const tid=setTimeout(()=>ctrl.abort(),120000);
-      const r=await fetch(`${API}/reading/evaluate/${sessionId}`,{method:"POST",signal:ctrl.signal});
+      const r=await authFetch(`${API}/reading/evaluate/${sessionId}`,{method:"POST",signal:ctrl.signal});
       clearTimeout(tid);
       if(!r.ok){ const err=await r.json().catch(()=>({})); throw new Error(err.detail||`Evaluation failed (${r.status})`); }
       const d=await r.json();
       setMetrics({accuracy:d.accuracy,fluency:d.fluency,completion:d.completion,pace_wpm:d.pace_wpm,pace_score:d.pace_score,pronunciation:d.pronunciation,final_score:d.final_score,grade:d.grade,transcript:d.transcript,ai_overview:d.ai_overview||""});
+      if (d.statuses && d.statuses.length === expWords.length) {
+        setWStatus(d.statuses);
+      }
     }catch(e){
       if(e.name==="AbortError") setError("Evaluation timed out. The model may still be loading — please try again.");
       else setError(e.message||"Evaluation failed");
@@ -249,7 +266,7 @@ export default function App() {
   const fetchHistory=async(sid)=>{
     if(!sid){setHistory([]);return;}
     setHistLoading(true);
-    try{const r=await fetch(`${API}/reading/sessions/${sid}`);if(r.ok)setHistory(await r.json());else setHistory([]);}
+    try{const r=await authFetch(`${API}/reading/sessions/${sid}`);if(r.ok)setHistory(await r.json());else setHistory([]);}
     catch(e){setHistory([]);}
     finally{setHistLoading(false);}
   };
@@ -261,7 +278,7 @@ export default function App() {
     setImpOpen(true);setImpTab("words");setImpError("");setStory(null);setPractWord(null);
     setImpLoading(true);
     try{
-      const r=await fetch(`${API}/improvements/${selStudent}`);
+      const r=await authFetch(`${API}/improvements/${selStudent}`);
       if(!r.ok) throw new Error("Failed to load improvements");
       setImpData(await r.json());
     }catch(e){setImpError(e.message);}
@@ -271,7 +288,7 @@ export default function App() {
   const generateStory=async()=>{
     setStoryLoading(true);setImpError("");
     try{
-      const r=await fetch(`${API}/improvements/${selStudent}/story?language=${storyLang}`,{method:"POST"});
+      const r=await authFetch(`${API}/improvements/${selStudent}/story?language=${storyLang}`,{method:"POST"});
       if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||"Story generation failed");}
       setStory(await r.json());
     }catch(e){setImpError(e.message);}
@@ -281,7 +298,7 @@ export default function App() {
   const saveNotes=async(sid)=>{
     const n = noteEdit[sid];
     try{
-      const r=await fetch(`${API}/reading/sessions/${sid}/notes`,{
+      const r=await authFetch(`${API}/reading/sessions/${sid}/notes`,{
         method:"PUT", headers:{"Content-Type":"application/json"},
         body:JSON.stringify({notes:n||""})
       });
@@ -293,7 +310,7 @@ export default function App() {
     if(!selStudent) return;
     setReportLoading(true); setReport("");
     try{
-      const r=await fetch(`${API}/improvements/${selStudent}/report`,{
+      const r=await authFetch(`${API}/improvements/${selStudent}/report`,{
         method:"POST", headers:{"Content-Type":"application/json"},
         body:JSON.stringify({session_ids: reportSessionIds})
       });
@@ -339,22 +356,77 @@ export default function App() {
 
   /* --- Sidebar Submissions --- */
   const submitTeacher=async(e)=>{e.preventDefault();
-    try{const r=await fetch(`${API}/teachers`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(fTeacher)});if(!r.ok) throw new Error("Failed");setFTeacher({name:"",subject:""});reload();}catch(err){setError(err.message);}};
+    try{const r=await authFetch(`${API}/teachers`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(fTeacher)});if(!r.ok) throw new Error("Failed");setFTeacher({name:"",email:"",password:"",subject:""});reload();}catch(err){setError(err.message);}};
   const submitStudent=async(e)=>{e.preventDefault();
-    if(!fStudent.teacher_id){setError("Please select a teacher first.");return;}
-    try{const r=await fetch(`${API}/students`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...fStudent,teacher_id:parseInt(fStudent.teacher_id)})});if(!r.ok) throw new Error("Failed");setFStudent({name:"",class_name:"",roll_no:"",teacher_id:""});reload();}catch(err){setError(err.message);}};
+    const tid = user?.is_admin ? fStudent.teacher_id : user?.id;
+    if(!tid){setError("Please select a teacher first.");return;}
+    try{const r=await authFetch(`${API}/students`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...fStudent,teacher_id:parseInt(tid)})});if(!r.ok) throw new Error("Failed");setFStudent({name:"",class_name:"",roll_no:"",teacher_id:""});reload();}catch(err){setError(err.message);}};
   const submitMaterial=async(e)=>{e.preventDefault();
     const fd=new FormData(); fd.append("title",fMaterial.title); fd.append("language",fMaterial.language); fd.append("class_level",fMaterial.class_level); if(fMaterial.file) fd.append("file",fMaterial.file);
-    try{const r=await fetch(`${API}/materials/upload`,{method:"POST",body:fd});if(!r.ok) throw new Error("Failed");setFMaterial({title:"",language:"english",class_level:"",file:null});reload();}catch(err){setError(err.message);}};
+    try{const r=await authFetch(`${API}/materials/upload`,{method:"POST",body:fd});if(!r.ok) throw new Error("Failed");setFMaterial({title:"",language:"english",class_level:"",file:null});reload();}catch(err){setError(err.message);}};
 
-  const deleteTeacher=async(id)=>{if(!confirm("Delete this teacher?"))return;try{await fetch(`${API}/teachers/${id}`,{method:"DELETE"});reload();}catch{}}
-  const deleteStudent=async(id)=>{if(!confirm("Delete this student?"))return;try{await fetch(`${API}/students/${id}`,{method:"DELETE"});reload();}catch{}}
-  const deleteMaterial=async(id)=>{if(!confirm("Delete this material?"))return;try{await fetch(`${API}/materials/${id}`,{method:"DELETE"});reload();}catch{}}
+  const deleteTeacher=async(id)=>{if(!confirm("Delete this teacher?"))return;try{await authFetch(`${API}/teachers/${id}`,{method:"DELETE"});reload();}catch{}}
+  const deleteStudent=async(id)=>{if(!confirm("Delete this student?"))return;try{await authFetch(`${API}/students/${id}`,{method:"DELETE"});reload();}catch{}}
+  const deleteMaterial=async(id)=>{if(!confirm("Delete this material?"))return;try{await authFetch(`${API}/materials/${id}`,{method:"DELETE"});reload();}catch{}}
 
   /* --- Derived --- */
   const dw=expWords.map((w,i)=>({word:w,status:i===curIdx&&wStatus[i]==="unread"?"current":wStatus[i]}));
   const prog=expWords.length>0?Math.round(curIdx/expWords.length*1000)/10:0;
   const sLabel=wsStatus==="streaming"?"● Listening":wsStatus==="connecting"?"◌ Connecting":wsStatus==="ready"?"◌ Ready":wsStatus==="stopped"?"■ Stopped":wsStatus==="error"?"✗ Error":"";
+
+  const handleLogin = (data) => {
+    setToken(data.access_token);
+    setUser(data.user);
+    localStorage.setItem("vachanam_token", data.access_token);
+    localStorage.setItem("vachanam_user", JSON.stringify(data.user));
+    if (!data.user.requires_profile) reload();
+  };
+
+  const handleLogout = () => {
+    setToken(null);
+    setUser(null);
+    localStorage.removeItem("vachanam_token");
+    localStorage.removeItem("vachanam_user");
+  };
+
+  const submitProfile = async (e) => {
+    e.preventDefault();
+    setProfileLoading(true);
+    try {
+      const r = await authFetch(`${API}/auth/complete-profile`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: profileName, subject: profileSubject })
+      });
+      if (!r.ok) throw new Error("Failed to update profile");
+      const updatedUser = await r.json();
+      setUser(updatedUser);
+      localStorage.setItem("vachanam_user", JSON.stringify(updatedUser));
+      reload();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setProfileLoading(false);
+    }
+  };
+
+  if (!token) return <Login onLogin={handleLogin} />;
+
+  if (user && user.requires_profile) {
+    return (
+      <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)' }}>
+        <div style={{ background: 'var(--surface)', padding: '40px', borderRadius: '24px', boxShadow: 'var(--shadow)', width: '100%', maxWidth: '400px' }}>
+          <h2 style={{ textAlign: 'center', margin: '0 0 24px', color: 'var(--ink)' }}>Complete Your Profile</h2>
+          <form onSubmit={submitProfile} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <input placeholder="Your Full Name" required value={profileName} onChange={e => setProfileName(e.target.value)} style={{ padding: '12px', borderRadius: '12px', border: '1px solid var(--ink4)', fontSize: '16px' }} />
+            <input placeholder="Subject you teach (e.g. English, Hindi)" required value={profileSubject} onChange={e => setProfileSubject(e.target.value)} style={{ padding: '12px', borderRadius: '12px', border: '1px solid var(--ink4)', fontSize: '16px' }} />
+            <button type="submit" disabled={profileLoading} style={{ padding: '14px', borderRadius: '12px', background: 'var(--primary)', color: 'white', border: 'none', fontSize: '16px', fontWeight: '600', cursor: 'pointer' }}>
+              {profileLoading ? "Saving..." : "Continue to Dashboard"}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell">
@@ -362,10 +434,18 @@ export default function App() {
       <header className="header-container">
         <div className="header-content">
           <div className="title-area">
-            <h1 className="title">📚 Vāchanam</h1>
+            <h1 className="title"><img src="https://raw.githubusercontent.com/microsoft/fluentui-emoji/main/assets/Books/3D/books_3d.png" alt="Books" className="icon-3d large" style={{width:42, height:42}} /> Vāchanam</h1>
             <p className="subtitle">Learning Made Fun</p>
           </div>
-          {sLabel&&<div className={`status-pill ${wsStatus==="streaming"?"live":""}`}>{sLabel}</div>}
+          <div style={{display: 'flex', alignItems: 'center', gap: '16px'}}>
+            {sLabel&&<div className={`status-pill ${wsStatus==="streaming"?"live":""}`}>{sLabel}</div>}
+            <div style={{display: 'flex', alignItems: 'center', gap: '10px', color: 'var(--ink2)', fontWeight: '500'}}>
+              <span style={{background: 'var(--ink5)', padding: '6px 12px', borderRadius: '20px', fontSize: '14px'}}>{user?.name} {user?.is_admin ? '(Admin)' : ''}</span>
+              <button onClick={handleLogout} style={{background: 'transparent', border: 'none', color: 'var(--ink2)', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '6px'}} title="Logout">
+                <LogOut size={18} />
+              </button>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -373,62 +453,64 @@ export default function App() {
       <div className="main-content">
         {/* Page-level tabs */}
         <div className="page-tabs">
-          <button className={`page-tab ${pageTab==="reading"?"active":""}`} onClick={()=>setPageTab("reading")}>📖 Reading</button>
-          <button className={`page-tab ${pageTab==="history"?"active":""}`} onClick={()=>setPageTab("history")}>📊 Progress</button>
-          <button className={`page-tab ${pageTab==="reports"?"active":""}`} onClick={()=>setPageTab("reports")}>📄 Reports</button>
-          <button className={`page-tab ${pageTab==="management"?"active":""}`} onClick={()=>setPageTab("management")}>+ Add Activity</button>
+          <button className={`page-tab ${pageTab==="reading"?"active":""}`} onClick={()=>setPageTab("reading")}><BookOpen className="icon-3d tab" /> Reading</button>
+          <button className={`page-tab ${pageTab==="history"?"active":""}`} onClick={()=>setPageTab("history")}><Activity className="icon-3d tab" /> Progress</button>
+          <button className={`page-tab ${pageTab==="reports"?"active":""}`} onClick={()=>setPageTab("reports")}><FileText className="icon-3d tab" /> Reports</button>
+          <button className={`page-tab ${pageTab==="management"?"active":""}`} onClick={()=>setPageTab("management")}><PlusCircle className="icon-3d tab" /> Add Activity</button>
         </div>
 
         {/* ── READING TAB ── */}
         {pageTab==="reading"&&(
         <main className="layout">
           <section className="controls-bar">
+            {user?.is_admin && (
+              <div className="field-inline">
+                <label><Users className="icon-3d btn" style={{width:14,height:14}} /> TEACHER</label>
+                <select value={selTeacher} onChange={e=>{setSelTeacher(e.target.value);setSelStudent("");}} disabled={active}>
+                  <option value="">All Teachers</option>
+                  {teachers.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </div>
+            )}
             <div className="field-inline">
-              <label>🦉 TEACHER</label>
-              <select value={selTeacher} onChange={e=>{setSelTeacher(e.target.value);setSelStudent("");}} disabled={active}>
-                <option value="">All Teachers</option>
-                {teachers.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
-            </div>
-            <div className="field-inline">
-              <label>👦 STUDENT</label>
+              <label><GraduationCap className="icon-3d btn" style={{width:14,height:14}} /> STUDENT</label>
               <select value={selStudent} onChange={e=>setSelStudent(e.target.value)} disabled={active}>
                 <option value="">Select Student</option>
                 {students.filter(s=>!selTeacher||String(s.teacher_id)===String(selTeacher)).map(s=><option key={s.id} value={s.id}>{s.name} (Class {s.class_name})</option>)}
               </select>
             </div>
             <div className="field-inline">
-              <label>📚 MATERIAL</label>
+              <label><BookText className="icon-3d btn" style={{width:14,height:14}} /> MATERIAL</label>
               <select value={selMaterial} onChange={e=>setSelMaterial(e.target.value)} disabled={active}>
                 <option value="">Select Material</option>
                 {materials.map(m=><option key={m.id} value={m.id}>{m.title} ({m.language})</option>)}
               </select>
             </div>
             <div className="btn-row">
-              <button className="start-btn" onClick={startReading} disabled={active}>{active?"Reading…":"▶ Start"}</button>
-              <button className="secondary stop-btn" onClick={()=>stopReading(true)} disabled={!active}>⏸ Stop</button>
-              <button className="secondary reset-btn" onClick={resetSession} disabled={active}>🔄 Reset</button>
-              {selStudent&&<button className="imp-btn" onClick={openImprovements} disabled={active}>📈 Improvements</button>}
+              <button className="start-btn" onClick={startReading} disabled={active}>{active? <><Activity className="icon-3d btn" /> Reading…</> : <><Play className="icon-3d btn" /> Start</>}</button>
+              <button className="secondary stop-btn" onClick={()=>stopReading(true)} disabled={!active}><Square className="icon-3d btn" /> Stop</button>
+              <button className="secondary reset-btn" onClick={resetSession} disabled={active}><RotateCcw className="icon-3d btn" /> Reset</button>
+              {selStudent&&<button className="imp-btn" onClick={openImprovements} disabled={active}><TrendingUp className="icon-3d btn" /> Improvements</button>}
             </div>
           </section>
 
           {active&&(
             <div className="timer-bar">
-              <span className="timer-label">⏱ Time Remaining</span>
+              <span className="timer-label"><Activity className="icon-3d btn" /> Time Remaining</span>
               <span className={`timer-value ${timeLeft<=30?"urgent":""}`}>{fmt(timeLeft)}</span>
             </div>
           )}
 
           <section className="panel passage-panel">
             <div className="panel-header">
-              <span>📖 Reading Passage</span>
+              <span><img src="https://raw.githubusercontent.com/microsoft/fluentui-emoji/main/assets/Open%20book/3D/open_book_3d.png" alt="Open Book" className="icon-3d panel-icon" style={{width:24, height:24, filter:'drop-shadow(0px 2px 4px rgba(0,0,0,0.15))'}} /> Reading Passage</span>
               <span className="word-count">{expWords.length>0&&`${curIdx} / ${expWords.length}`}</span>
             </div>
             
             {dw.length===0 ? (
               <div className="empty-state">
                 <div className="empty-icon-wrapper">
-                  <div className="empty-icon">📕</div>
+                  <div className="empty-icon"><img src="https://raw.githubusercontent.com/microsoft/fluentui-emoji/main/assets/Closed%20book/3D/closed_book_3d.png" alt="Closed Book" style={{width:72, height:72, filter: "drop-shadow(0px 8px 12px rgba(0,0,0,0.15))", transform: "perspective(200px) translateZ(10px)"}} /></div>
                 </div>
                 <div className="empty-title">Select a material to load the passage.</div>
                 <div className="empty-subtitle">Choose from our collection of engaging stories<br/>and learning materials!</div>
@@ -446,7 +528,7 @@ export default function App() {
           {sessionId&&!metrics&&(
             <div className="evaluate-row">
               <button className="evaluate-btn" onClick={evaluate} disabled={evaluating}>
-                {evaluating?"⏳ Evaluating…":"📊 Evaluate Reading"}
+                {evaluating? <><Activity className="icon-3d btn" /> Evaluating…</> : <><BarChart3 className="icon-3d btn" /> Evaluate Reading</>}
               </button>
             </div>
           )}
@@ -466,7 +548,7 @@ export default function App() {
               </div>
               {metrics.ai_overview&&(
                 <div className="ai-overview-box">
-                  <span className="ai-overview-icon">🤖</span>
+                  <span className="ai-overview-icon"><Bot className="icon-3d large" style={{margin:0, width:26, height:26}} /></span>
                   <div>
                     <div className="ai-overview-title">AI Feedback</div>
                     <p className="ai-overview-text">{metrics.ai_overview}</p>
@@ -475,7 +557,7 @@ export default function App() {
               )}
               {metrics.transcript&&(
                 <div className="transcript-section">
-                  <h4 className="transcript-title">📝 Transcription</h4>
+                  <h4 className="transcript-title"><FileText className="icon-3d panel-icon" /> Transcription</h4>
                   <p className="transcript-text">{metrics.transcript}</p>
                 </div>
               )}
@@ -490,13 +572,15 @@ export default function App() {
         {pageTab==="history"&&(
         <main className="layout">
           <section className="controls-bar">
-            <div className="field-inline">
-              <label>Teacher</label>
-              <select value={selTeacher} onChange={e=>{setSelTeacher(e.target.value);setSelStudent("");}}>
-                <option value="">All teachers</option>
-                {teachers.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
-            </div>
+            {user?.is_admin && (
+              <div className="field-inline">
+                <label>Teacher</label>
+                <select value={selTeacher} onChange={e=>{setSelTeacher(e.target.value);setSelStudent("");}}>
+                  <option value="">All teachers</option>
+                  {teachers.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </div>
+            )}
             <div className="field-inline">
               <label>Student</label>
               <select value={selStudent} onChange={e=>setSelStudent(e.target.value)}>
@@ -505,11 +589,11 @@ export default function App() {
               </select>
             </div>
             <div className="btn-row">
-              {selStudent&&<button className="imp-btn" onClick={openImprovements}>📈 Improvements</button>}
+              {selStudent&&<button className="imp-btn" onClick={openImprovements}><TrendingUp className="icon-3d btn" /> Improvements</button>}
             </div>
           </section>
 
-          {!selStudent&&<div className="history-empty">👆 Select a student to view their reading history.</div>}
+          {!selStudent&&<div className="history-empty"><AlertCircle className="icon-3d btn" style={{color:"var(--ink3)"}}/> Select a student to view their reading history.</div>}
           {selStudent&&histLoading&&<div className="history-empty">Loading history…</div>}
           {selStudent&&!histLoading&&history.length===0&&<div className="history-empty">No evaluated sessions yet for this student.</div>}
           {selStudent&&!histLoading&&history.length>0&&(
@@ -571,12 +655,12 @@ export default function App() {
                     <div style={{marginTop:12}}>
                       {h.ai_overview&&(
                         <div className="ai-overview-box" style={{margin:"0 0 12px"}}>
-                          <span className="ai-overview-icon">🤖</span>
+                          <span className="ai-overview-icon"><Bot className="icon-3d large" style={{margin:0, width:26, height:26}} /></span>
                           <div><div className="ai-overview-title">AI Feedback</div><p className="ai-overview-text">{h.ai_overview}</p></div>
                         </div>
                       )}
                       {h.transcript&&(
-                        <div><h4 className="transcript-title">📝 Transcription</h4><p className="transcript-text">{h.transcript}</p></div>
+                        <div><h4 className="transcript-title"><FileText className="icon-3d panel-icon" /> Transcription</h4><p className="transcript-text">{h.transcript}</p></div>
                       )}
                       {wrongArr.length>8&&(
                         <div className="history-wrong" style={{marginTop:10}}>
@@ -587,7 +671,7 @@ export default function App() {
                       
                       {/* Teacher Notes Area */}
                       <div className="teacher-notes-section" style={{marginTop:16}}>
-                        <h4 className="transcript-title">📝 Teacher Notes</h4>
+                        <h4 className="transcript-title"><FileText className="icon-3d panel-icon" /> Teacher Notes</h4>
                         <textarea 
                           className="notes-textarea" 
                           placeholder="Add your notes about this session..."
@@ -612,44 +696,52 @@ export default function App() {
         {pageTab==="management"&&(
         <main className="layout">
           <div className="management-grid">
-            <div className="manage-card">
-              <h3>👩‍🏫 Add Teacher</h3>
-              <form className="manage-form" onSubmit={submitTeacher}>
-                <input placeholder="Name" required value={fTeacher.name} onChange={e=>setFTeacher({...fTeacher,name:e.target.value})}/>
-                <input placeholder="Subject" required value={fTeacher.subject} onChange={e=>setFTeacher({...fTeacher,subject:e.target.value})}/>
-                <button type="submit">Add Teacher</button>
-              </form>
-              {teachers.length>0&&(
-                <div className="manage-list">
-                  {teachers.map(t=>(
-                    <div key={t.id} className="manage-list-item" style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                      <span>{t.name} — {t.subject}</span>
-                      <button className="del-btn" onClick={()=>deleteTeacher(t.id)}>🗑️</button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            {user?.is_admin && (
+              <div className="manage-card">
+                <h3><Users className="icon-3d manage" /> Add Teacher</h3>
+                <form className="manage-form" onSubmit={submitTeacher}>
+                  <input placeholder="Name" required value={fTeacher.name} onChange={e=>setFTeacher({...fTeacher,name:e.target.value})}/>
+                  <input type="email" placeholder="Email" required value={fTeacher.email} onChange={e=>setFTeacher({...fTeacher,email:e.target.value})}/>
+                  <input type="password" placeholder="Temporary Password" required value={fTeacher.password} onChange={e=>setFTeacher({...fTeacher,password:e.target.value})}/>
+                  <input placeholder="Subject" required value={fTeacher.subject} onChange={e=>setFTeacher({...fTeacher,subject:e.target.value})}/>
+                  <button type="submit">Add Teacher</button>
+                </form>
+                {teachers.length>0&&(
+                  <div className="manage-list">
+                    {teachers.map(t=>(
+                      <div key={t.id} className="manage-list-item" style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <span>{t.name} — {t.subject}</span>
+                        <button className="del-btn" onClick={()=>deleteTeacher(t.id)}><Trash2 className="icon-3d btn" style={{margin:0, width:14,height:14}}/></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="manage-card">
-              <h3>🎓 Add Student</h3>
+              <h3><GraduationCap className="icon-3d manage" /> Add Student</h3>
               <form className="manage-form" onSubmit={submitStudent}>
-                <select required value={fStudent.teacher_id} onChange={e=>setFStudent({...fStudent,teacher_id:e.target.value})}>
-                  <option value="">Select Teacher *</option>
-                  {teachers.map(t=><option key={t.id} value={t.id}>{t.name} ({t.subject})</option>)}
-                </select>
-                {teachers.length===0&&<div className="sidebar-hint" style={{marginBottom:10}}>⚠ Add a teacher first</div>}
+                {user?.is_admin && (
+                  <>
+                    <select required value={fStudent.teacher_id} onChange={e=>setFStudent({...fStudent,teacher_id:e.target.value})}>
+                      <option value="">Select Teacher *</option>
+                      {teachers.map(t=><option key={t.id} value={t.id}>{t.name} ({t.subject})</option>)}
+                    </select>
+                    {teachers.length===0&&<div className="sidebar-hint" style={{marginBottom:10}}>⚠ Add a teacher first</div>}
+                  </>
+                )}
                 <input placeholder="Name" required value={fStudent.name} onChange={e=>setFStudent({...fStudent,name:e.target.value})}/>
                 <input placeholder="Class" required value={fStudent.class_name} onChange={e=>setFStudent({...fStudent,class_name:e.target.value})}/>
                 <input placeholder="Roll No" required value={fStudent.roll_no} onChange={e=>setFStudent({...fStudent,roll_no:e.target.value})}/>
-                <button type="submit" disabled={teachers.length===0}>Add Student</button>
+                <button type="submit" disabled={user?.is_admin && teachers.length===0}>Add Student</button>
               </form>
               {students.length>0&&(
                 <div className="manage-list">
                   {students.map(s=>(
                     <div key={s.id} className="manage-list-item" style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                       <span>{s.name} ({s.class_name})</span>
-                      <button className="del-btn" onClick={()=>deleteStudent(s.id)}>🗑️</button>
+                      <button className="del-btn" onClick={()=>deleteStudent(s.id)}><Trash2 className="icon-3d btn" style={{margin:0, width:14,height:14}}/></button>
                     </div>
                   ))}
                 </div>
@@ -657,7 +749,7 @@ export default function App() {
             </div>
 
             <div className="manage-card">
-              <h3>📄 Add Material</h3>
+              <h3><FilePlus className="icon-3d manage" /> Add Material</h3>
               <form className="manage-form" onSubmit={submitMaterial}>
                 <input placeholder="Title" required value={fMaterial.title} onChange={e=>setFMaterial({...fMaterial,title:e.target.value})}/>
                 <select value={fMaterial.language} onChange={e=>setFMaterial({...fMaterial,language:e.target.value})}>
@@ -672,7 +764,7 @@ export default function App() {
                   {materials.map(m=>(
                     <div key={m.id} className="manage-list-item" style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                       <span>{m.title} ({m.language})</span>
-                      <button className="del-btn" onClick={()=>deleteMaterial(m.id)}>🗑️</button>
+                      <button className="del-btn" onClick={()=>deleteMaterial(m.id)}><Trash2 className="icon-3d btn" style={{margin:0, width:14,height:14}}/></button>
                     </div>
                   ))}
                 </div>
@@ -686,13 +778,15 @@ export default function App() {
         {pageTab==="reports"&&(
         <main className="layout">
           <section className="controls-bar">
-            <div className="field-inline">
-              <label>Teacher</label>
-              <select value={selTeacher} onChange={e=>{setSelTeacher(e.target.value);setSelStudent("");}}>
-                <option value="">All teachers</option>
-                {teachers.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
-            </div>
+            {user?.is_admin && (
+              <div className="field-inline">
+                <label>Teacher</label>
+                <select value={selTeacher} onChange={e=>{setSelTeacher(e.target.value);setSelStudent("");}}>
+                  <option value="">All teachers</option>
+                  {teachers.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </div>
+            )}
             <div className="field-inline">
               <label>Student</label>
               <select value={selStudent} onChange={e=>setSelStudent(e.target.value)}>
@@ -709,16 +803,16 @@ export default function App() {
             </div>
             <div className="btn-row">
               <button className="evaluate-btn" style={{padding:"12px 24px", fontSize:"14px", borderRadius:"10px"}} onClick={generateReport} disabled={!selStudent||reportLoading}>
-                {reportLoading?"⏳ Generating…":"📄 Generate AI Report"}
+                {reportLoading? <><Activity className="icon-3d btn" /> Generating…</> : <><FileText className="icon-3d btn" /> Generate AI Report</>}
               </button>
             </div>
           </section>
 
-          {!selStudent&&<div className="history-empty">👆 Select a student to generate a report.</div>}
+          {!selStudent&&<div className="history-empty"><AlertCircle className="icon-3d btn" style={{color:"var(--ink3)"}}/> Select a student to generate a report.</div>}
           
           {report&&(
             <div className="panel report-panel">
-              <div className="panel-header">📈 Student Progress Report</div>
+              <div className="panel-header"><TrendingUp className="icon-3d panel-icon" /> Student Progress Report</div>
               <div className="report-content markdown-body" style={{lineHeight: 1.8, fontSize: 15}}>
                 <ReactMarkdown>{report}</ReactMarkdown>
               </div>
@@ -733,12 +827,12 @@ export default function App() {
         <div className="imp-overlay" onClick={e=>{if(e.target.classList.contains('imp-overlay'))setImpOpen(false);}}>
           <div className="imp-modal">
             <div className="imp-modal-header">
-              <h2>📈 Improvements — {student?.name}</h2>
+              <h2><TrendingUp className="icon-3d large" style={{width: 30, height: 30}} /> Improvements — {student?.name}</h2>
               <button className="imp-close" onClick={()=>setImpOpen(false)}>✕</button>
             </div>
             <div className="imp-tabs">
-              <button className={`imp-tab ${impTab==="words"?"active":""}`} onClick={()=>setImpTab("words")}>🔤 Wrong Words</button>
-              <button className={`imp-tab ${impTab==="story"?"active":""}`} onClick={()=>setImpTab("story")}>📖 Practice Story</button>
+              <button className={`imp-tab ${impTab==="words"?"active":""}`} onClick={()=>setImpTab("words")}><Edit3 className="icon-3d tab" /> Wrong Words</button>
+              <button className={`imp-tab ${impTab==="story"?"active":""}`} onClick={()=>setImpTab("story")}><BookOpen className="icon-3d tab" /> Practice Story</button>
               {impTab==="words"&&(
                 <select
                   value={impLang}
@@ -786,7 +880,7 @@ export default function App() {
                                 {countIcon} {count}× wrong
                               </div>
                               <div className="word-card-actions">
-                                <button className="wc-btn" onClick={()=>speakWord(word,lang)}>🔊 Hear</button>
+                                <button className="wc-btn" onClick={()=>speakWord(word,lang)}><Headphones className="icon-3d btn" /> Hear</button>
                                 <button className="wc-btn practice" onClick={()=>{setPractWord(word);setPractAttempts([]);}}>
                                   ✏ Practice
                                 </button>
@@ -835,7 +929,7 @@ export default function App() {
                 {story&&(
                   <div className="story-area">
                     <div className="story-passage">
-                      <h4 className="story-title">📖 Practice Story</h4>
+                      <h4 className="story-title"><BookOpen className="icon-3d tab" /> Practice Story</h4>
                       <p className="story-text">{story.story_text}</p>
                       <div className="story-words">
                         <span className="story-words-label">Focus words: </span>

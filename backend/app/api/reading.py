@@ -19,6 +19,7 @@ from app.schemas.reading import (
     ReadingSessionOut,
     ReadingSessionSummary,
 )
+from app.core.security import get_current_user
 from app.services.eval_service import evaluate_reading
 from app.services.pdf_service import extract_pdf_text
 from app.services.alignment_service import align_words
@@ -47,11 +48,15 @@ def transcribe_reading(
     material_id: int = Form(...),
     audio: UploadFile = File(...),
     db: Session = Depends(get_db),
+    current_user: Teacher = Depends(get_current_user),
 ):
     logger.info("reading.transcribe start student_id=%s material_id=%s", student_id, material_id)
     student = db.query(Student).filter(Student.id == student_id).first()
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
+
+    if not current_user.is_admin and student.teacher_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized for this student")
 
     material = db.query(Material).filter(Material.id == material_id).first()
     if not material:
@@ -105,8 +110,12 @@ def transcribe_reading(
 
 
 @router.get("/sessions/{student_id}", response_model=List[ReadingSessionSummary])
-def get_student_sessions(student_id: int, db: Session = Depends(get_db)):
+def get_student_sessions(student_id: int, db: Session = Depends(get_db), current_user: Teacher = Depends(get_current_user)):
     """Return all evaluated sessions for a student, newest first."""
+    student = db.query(Student).filter(Student.id == student_id).first()
+    if student and not current_user.is_admin and student.teacher_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+        
     sessions = (
         db.query(ReadingSession)
         .filter(ReadingSession.student_id == student_id, ReadingSession.evaluated == True)  # noqa: E712
@@ -135,17 +144,22 @@ class NotesUpdate(BaseModel):
     notes: str
 
 @router.put("/sessions/{session_id}/notes")
-def update_teacher_notes(session_id: int, update: NotesUpdate, db: Session = Depends(get_db)):
+def update_teacher_notes(session_id: int, update: NotesUpdate, db: Session = Depends(get_db), current_user: Teacher = Depends(get_current_user)):
     """Update teacher notes for a reading session."""
     session = db.query(ReadingSession).filter(ReadingSession.id == session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+        
+    student = db.query(Student).filter(Student.id == session.student_id).first()
+    if not current_user.is_admin and student and student.teacher_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
     session.teacher_notes = update.notes
     db.commit()
     return {"status": "success", "notes": session.teacher_notes}
 
 @router.post("/evaluate/{session_id}", response_model=ReadingSessionOut)
-async def evaluate_session_audio(session_id: int, db: Session = Depends(get_db)):
+async def evaluate_session_audio(session_id: int, db: Session = Depends(get_db), current_user: Teacher = Depends(get_current_user)):
     """Run Whisper transcription + evaluation on a saved session's audio."""
     import asyncio
     logger.info("reading.evaluate_audio start session_id=%s", session_id)
@@ -154,6 +168,10 @@ async def evaluate_session_audio(session_id: int, db: Session = Depends(get_db))
     session = db.query(ReadingSession).filter(ReadingSession.id == session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+
+    student = db.query(Student).filter(Student.id == session.student_id).first()
+    if not current_user.is_admin and student and student.teacher_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
 
     material = db.query(Material).filter(Material.id == session.material_id).first()
     if not material:
@@ -200,6 +218,9 @@ async def evaluate_session_audio(session_id: int, db: Session = Depends(get_db))
     session.evaluated = True
     db.commit()
     db.refresh(session)
+    
+    # Attach dynamically calculated statuses so the frontend can color the words
+    setattr(session, "statuses", metrics.get("statuses", []))
 
     logger.info("reading.evaluate_audio done session_id=%s score=%s", session.id, session.final_score)
     return session
@@ -207,11 +228,15 @@ async def evaluate_session_audio(session_id: int, db: Session = Depends(get_db))
 
 
 @router.post("/evaluate", response_model=ReadingSessionOut)
-def evaluate_session(payload: ReadingSessionEvaluate, db: Session = Depends(get_db)):
+def evaluate_session(payload: ReadingSessionEvaluate, db: Session = Depends(get_db), current_user: Teacher = Depends(get_current_user)):
     logger.info("reading.evaluate start session_id=%s", payload.session_id)
     session = db.query(ReadingSession).filter(ReadingSession.id == payload.session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+
+    student = db.query(Student).filter(Student.id == session.student_id).first()
+    if not current_user.is_admin and student and student.teacher_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
 
     session.evaluated = True
     db.commit()
@@ -224,7 +249,11 @@ def evaluate_session(payload: ReadingSessionEvaluate, db: Session = Depends(get_
 def list_sessions(
     student_id: int = Query(...),
     db: Session = Depends(get_db),
+    current_user: Teacher = Depends(get_current_user),
 ):
+    student = db.query(Student).filter(Student.id == student_id).first()
+    if student and not current_user.is_admin and student.teacher_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
     rows = (
         db.query(ReadingSession, Material)
         .join(Material, ReadingSession.material_id == Material.id)
@@ -258,11 +287,15 @@ def list_sessions(
 
 
 @router.delete("/sessions/{session_id}")
-def delete_session(session_id: int, db: Session = Depends(get_db)):
+def delete_session(session_id: int, db: Session = Depends(get_db), current_user: Teacher = Depends(get_current_user)):
     logger.info("reading.delete start session_id=%s", session_id)
     session = db.query(ReadingSession).filter(ReadingSession.id == session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+
+    student = db.query(Student).filter(Student.id == session.student_id).first()
+    if not current_user.is_admin and student and student.teacher_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
 
     if session.audio_path:
         Path(session.audio_path).unlink(missing_ok=True)

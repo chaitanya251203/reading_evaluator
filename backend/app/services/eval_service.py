@@ -129,6 +129,7 @@ def evaluate_reading(
         accuracy = 0.0
         completion = 0.0
         wrong_words = []
+        alignment = {"statuses": ["unread"] * len(exp_words)}
 
     fluency = _fluency_score(segments)
     pace_wpm, pace_score = _pace_score(len(spk_words), duration_seconds)
@@ -155,4 +156,5 @@ def evaluate_reading(
         "final_score": final_score,
         "grade": grade,
         "wrong_words": wrong_words,
+        "statuses": alignment["statuses"],
     }

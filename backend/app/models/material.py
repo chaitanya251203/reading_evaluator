@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Integer, String, Text
+from sqlalchemy import Column, DateTime, Integer, String, Text, ForeignKey
 from sqlalchemy.orm import relationship
 
 from app.db.database import Base
@@ -16,6 +16,9 @@ class Material(Base):
     sha256 = Column(String, nullable=False, unique=True)
     language = Column(String, nullable=False)
     class_level = Column(String, nullable=False)
+    teacher_id = Column(Integer, ForeignKey("teachers.id"), nullable=True)
     uploaded_at = Column(DateTime, default=datetime.utcnow)
+
+    teacher = relationship("Teacher")
 
     sessions = relationship("ReadingSession", back_populates="material")

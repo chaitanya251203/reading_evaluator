@@ -19,6 +19,8 @@ from app.models.session import ReadingSession
 from app.models.student import Student
 from app.schemas.reading import ImprovementsOut, PracticeStoryOut, WrongWordItem
 from app.services.ai_service import generate_practice_story
+from app.core.security import get_current_user
+from app.models.teacher import Teacher
 
 router = APIRouter()
 logger = logging.getLogger("reading_assessment")
@@ -46,11 +48,14 @@ def _aggregate_wrong_words(sessions_with_lang: list) -> dict:
 
 
 @router.get("/{student_id}", response_model=ImprovementsOut)
-def get_improvements(student_id: int, db: Session = Depends(get_db)):
+def get_improvements(student_id: int, db: Session = Depends(get_db), current_user: Teacher = Depends(get_current_user)):
     """Return aggregated wrong-word frequencies for a student, tagged with language."""
     student = db.query(Student).filter(Student.id == student_id).first()
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
+        
+    if not current_user.is_admin and student.teacher_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to view this student")
 
     sessions = (
         db.query(ReadingSession)
@@ -81,11 +86,14 @@ def get_improvements(student_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{student_id}/story", response_model=PracticeStoryOut)
-def create_practice_story(student_id: int, language: str = Query("english"), db: Session = Depends(get_db)):
+def create_practice_story(student_id: int, language: str = Query("english"), db: Session = Depends(get_db), current_user: Teacher = Depends(get_current_user)):
     """Generate a practice story from the student's worst words, filtered by language."""
     student = db.query(Student).filter(Student.id == student_id).first()
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
+
+    if not current_user.is_admin and student.teacher_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to view this student")
 
     # Get all evaluated sessions
     all_sessions = (
@@ -131,6 +139,7 @@ def create_practice_story(student_id: int, language: str = Query("english"), db:
         sha256=f"practice_{uuid.uuid4().hex[:12]}",
         language=language,
         class_level="practice",
+        teacher_id=current_user.id if not current_user.is_admin else None,
     )
     db.add(practice_material)
     db.commit()
@@ -152,11 +161,14 @@ class ReportRequest(BaseModel):
     session_ids: List[int] = []
 
 @router.post("/{student_id}/report")
-def generate_student_report(student_id: int, req: ReportRequest, db: Session = Depends(get_db)):
+def generate_student_report(student_id: int, req: ReportRequest, db: Session = Depends(get_db), current_user: Teacher = Depends(get_current_user)):
     """Generate a comprehensive LLM report for a student based on selected sessions."""
     student = db.query(Student).filter(Student.id == student_id).first()
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
+
+    if not current_user.is_admin and student.teacher_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to view this student")
 
     query = db.query(ReadingSession).filter(ReadingSession.student_id == student_id, ReadingSession.evaluated == True)
     if req.session_ids:

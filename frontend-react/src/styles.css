@@ -799,6 +799,59 @@ button.secondary:not(:disabled):hover {
   font-family: inherit;
 }
 
+/* ========= 3D ICONS ========= */
+.icon-3d {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  filter: drop-shadow(0px 3px 4px rgba(0,0,0,0.25)) drop-shadow(0px 1px 2px rgba(0,0,0,0.15));
+  margin-right: 8px;
+  stroke-width: 2.5px;
+  transform: perspective(200px) translateZ(5px);
+  transition: transform 0.2s ease, filter 0.2s ease;
+}
+
+.icon-3d.large { 
+  width: 38px; 
+  height: 38px; 
+  color: #a435f0; 
+  filter: drop-shadow(0px 4px 8px rgba(164,53,240,0.5)); 
+  margin-right: 12px; 
+}
+
+.icon-3d.btn { 
+  width: 16px; 
+  height: 16px; 
+  margin-right: 6px; 
+  filter: drop-shadow(0px 2px 3px rgba(0,0,0,0.3));
+}
+
+.icon-3d.tab { 
+  width: 18px; 
+  height: 18px; 
+  margin-right: 6px; 
+  color: inherit;
+}
+
+.icon-3d.panel-icon {
+  width: 20px;
+  height: 20px;
+  color: var(--primary);
+}
+
+.icon-3d.manage {
+  width: 26px;
+  height: 26px;
+  color: var(--primary);
+  margin-right: 10px;
+}
+
+button:hover .icon-3d {
+  transform: perspective(200px) translateZ(8px) scale(1.05);
+  filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.3)) drop-shadow(0px 2px 3px rgba(0,0,0,0.2));
+}
+
 .history-expand-btn:hover {
   border-color: var(--primary);
   color: var(--primary);
